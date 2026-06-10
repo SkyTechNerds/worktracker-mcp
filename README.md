@@ -12,9 +12,9 @@ Agent**: Claude Code, ChatGPT Desktop, Cursor, Codex CLI, Windsurf, Zed u. a. Da
 > „Die Zeit von 12:30 bis 13 war Pause."
 > „09–10 Uhr war das Jumo Daily, war ein Meeting."
 
-> **Ersetzt den Claude-Skill.** Dieser MCP-Server deckt alles ab, was der frühere
-> [`worktracker`-Claude-Skill](https://github.com/SkyTechNerds/WorkTracker-Claude) konnte —
-> in Claude Code bindest du ihn jetzt einfach als MCP-Server ein (siehe unten) statt als Skill.
+> **Nachfolger des früheren Claude-Skills.** Dieser MCP-Server deckt alles ab, was der
+> einstige `worktracker`-Claude-Skill konnte — in Claude Code bindest du ihn jetzt einfach
+> als MCP-Server ein (siehe unten) statt als Skill.
 
 ---
 
