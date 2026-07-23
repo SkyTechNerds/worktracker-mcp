@@ -107,6 +107,23 @@ def _today() -> str:
     return datetime.now().strftime("%Y-%m-%d")
 
 
+def _push_clockodo(date: str) -> dict | None:
+    """Spiegelt einen Tag nach clockodo (WorkTracker ist Quelle der Wahrheit).
+
+    Bewusst fehlertolerant: ein clockodo-Problem darf NIE einen WorkTracker-
+    Schreibzugriff scheitern lassen. Fehlt die clockodo-Config, passiert nichts.
+    """
+    try:
+        import clockodo_sync  # lazy, damit der Server ohne clockodo weiterlaeuft
+    except Exception:
+        return None
+    try:
+        return clockodo_sync.sync_day(date)
+    except Exception as exc:  # noqa: BLE001 - Sync ist best effort
+        sys.stderr.write(f"[clockodo-sync] {date}: {exc}\n")
+        return {"date": date, "error": str(exc)}
+
+
 @mcp.tool()
 def health() -> dict:
     """Prüft, ob die WorkTracker-API erreichbar ist. Gibt Status + Version zurück."""
@@ -171,7 +188,8 @@ def assign_time(
         payload["note"] = note
     if meeting:
         payload["meeting"] = True
-    return _request("POST", "/api/assign", payload)
+    result = _request("POST", "/api/assign", payload)
+    return {"worktracker": result, "clockodo_sync": _push_clockodo(payload["date"])}
 
 
 @mcp.tool()
@@ -185,7 +203,25 @@ def set_day(segments: list[dict], date: str | None = None) -> Any:
              "ticket":?, "project":?, "note":?, "meeting":?}.
         date: Datum YYYY-MM-DD. Leer = heute.
     """
-    return _request("POST", "/api/day", {"date": date or _today(), "segments": segments})
+    d = date or _today()
+    result = _request("POST", "/api/day", {"date": d, "segments": segments})
+    return {"worktracker": result, "clockodo_sync": _push_clockodo(d)}
+
+
+@mcp.tool()
+def sync_clockodo(dates: list[str] | None = None) -> Any:
+    """Spiegelt einen oder mehrere Tage explizit nach clockodo (WorkTracker ist
+    Quelle der Wahrheit). Normalerweise laeuft der Sync automatisch nach jedem
+    Schreibzugriff; dieses Tool ist fuer Nachbuchungen/Backfill oder wenn ein Tag
+    direkt in der WorkTracker-App (ohne MCP) geaendert wurde.
+
+    Args:
+        dates: Liste von Tagen YYYY-MM-DD. Leer = heute.
+    """
+    import clockodo_sync
+
+    target = dates or [_today()]
+    return clockodo_sync.sync_days(target)
 
 
 @mcp.tool()
@@ -195,7 +231,9 @@ def reset_day(date: str | None = None) -> Any:
     Args:
         date: Datum YYYY-MM-DD. Leer = heute.
     """
-    return _request("POST", "/api/reset", {"date": date or _today()})
+    d = date or _today()
+    result = _request("POST", "/api/reset", {"date": d})
+    return {"worktracker": result, "clockodo_sync": _push_clockodo(d)}
 
 
 # --------------------------------------------------------------------------
