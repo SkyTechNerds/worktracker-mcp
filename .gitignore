@@ -1,3 +1,8 @@
 .venv/
 __pycache__/
 *.pyc
+
+# clockodo-Sync: enthaelt API-Key bzw. lokalen Zustand
+clockodo_config.json
+clockodo_state.json
+clockodo_sync.log
