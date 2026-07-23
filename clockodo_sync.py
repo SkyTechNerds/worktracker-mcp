@@ -330,6 +330,86 @@ def _canon_to_entry_body(c: tuple) -> dict:
 
 
 # --------------------------------------------------------------------------
+# Gesetzliche Pausenpruefung (ArbZG §4)
+# --------------------------------------------------------------------------
+
+_BREAK_RULES = _HERE / "break_rules.json"
+
+_DEFAULT_BREAK_RULES = {
+    "thresholds": [{"work_over_min": 540, "required_break_min": 45},
+                   {"work_over_min": 360, "required_break_min": 30}],
+    "min_chunk_min": 15,
+    "max_continuous_work_min": 360,
+}
+
+
+def _load_break_rules() -> dict:
+    return _load_json(_BREAK_RULES) if _BREAK_RULES.is_file() else _DEFAULT_BREAK_RULES
+
+
+def _required_break(work_min: float, rules: dict) -> int:
+    for t in sorted(rules.get("thresholds", []), key=lambda x: -x["work_over_min"]):
+        if work_min > t["work_over_min"]:
+            return t["required_break_min"]
+    return 0
+
+
+def check_breaks_segments(segments: list[dict], rules: dict | None = None) -> dict:
+    """Prueft eine Segmentliste gegen die Pausenregeln. Rueckgabe mit
+    compliant-Flag, Ist/Soll-Pause, laengster Arbeitsstrecke am Stueck und Fixes."""
+    rules = rules or _load_break_rules()
+    chunk = rules.get("min_chunk_min", 15)
+    max_cont = rules.get("max_continuous_work_min", 360)
+    segs = sorted(segments, key=lambda s: s["start"])
+
+    def mins(s):
+        return (s["end"] - s["start"]) / 60000
+
+    work_min = sum(mins(s) for s in segs if s.get("kind") == "work")
+    # Nur Pausenabschnitte >= chunk zaehlen als Ruhepause (gestueckelt erlaubt)
+    qual_break = sum(mins(s) for s in segs if s.get("kind") == "break" and mins(s) >= chunk)
+    required = _required_break(work_min, rules)
+
+    # Laengste Arbeitsstrecke ohne qualifizierende Pause (kurze Pausen setzen NICHT zurueck)
+    longest = cur = 0.0
+    for s in segs:
+        d = mins(s)
+        if s.get("kind") == "work":
+            cur += d
+            longest = max(longest, cur)
+        elif s.get("kind") == "break" and d >= chunk:
+            cur = 0.0
+
+    issues = []
+    break_ok = qual_break + 1e-6 >= required
+    if not break_ok:
+        issues.append(f"Pause zu kurz: {qual_break:.0f} min statt {required} min "
+                      f"(bei {work_min/60:.1f} h Arbeit); fehlend {required - qual_break:.0f} min")
+    stretch_ok = longest <= max_cont + 1e-6
+    if not stretch_ok:
+        issues.append(f"{longest/60:.1f} h am Stueck ohne Pause (>= {chunk} min) — "
+                      f"max. {max_cont/60:.0f} h erlaubt")
+
+    return {
+        "work_h": round(work_min / 60, 2),
+        "break_min": round(qual_break),
+        "required_break_min": required,
+        "break_ok": break_ok,
+        "longest_stretch_h": round(longest / 60, 2),
+        "stretch_ok": stretch_ok,
+        "compliant": break_ok and stretch_ok,
+        "issues": issues,
+    }
+
+
+def check_breaks(date: str) -> dict:
+    """Prueft einen Tag (YYYY-MM-DD) gegen die gesetzlichen Pausenregeln."""
+    res = check_breaks_segments(_wt_get_day(date).get("segments", []))
+    res["date"] = date
+    return res
+
+
+# --------------------------------------------------------------------------
 # State
 # --------------------------------------------------------------------------
 
@@ -417,6 +497,12 @@ def reconcile_day(date: str, dry_run: bool = False, source: str = "poll") -> dic
     plan = {"date": date, "direction": direction, "source": source,
             "wt_segments": len(wt_segs), "clockodo_entries": len(ck_entries),
             "created": 0, "deleted": 0, "wt_rewritten": False, "notes": []}
+
+    # Gesetzliche Pausenpruefung (nur Hinweis, aendert nichts)
+    bc = check_breaks_segments(wt_segs)
+    if not bc["compliant"]:
+        plan["break_warning"] = bc
+        plan["notes"].append("Pausen-Hinweis (ArbZG): " + "; ".join(bc["issues"]))
 
     if direction == "noop":
         if not dry_run:

@@ -225,6 +225,23 @@ def sync_clockodo(dates: list[str] | None = None) -> Any:
 
 
 @mcp.tool()
+def check_breaks(dates: list[str] | None = None) -> Any:
+    """Prueft Tage gegen die gesetzlichen Pausenregeln (ArbZG §4):
+    >6 h Arbeit -> mind. 30 min Pause, >9 h -> 45 min; max. 6 h am Stueck ohne
+    Pause; Pausen duerfen gestueckelt werden, zaehlen aber nur ab 15 min.
+    Meldet je Tag Ist/Soll-Pause, laengste Arbeitsstrecke und Verstoesse.
+    Regeln stehen in break_rules.json (anpassbar). Aendert nichts.
+
+    Args:
+        dates: Liste von Tagen YYYY-MM-DD. Leer = heute.
+    """
+    import clockodo_sync
+
+    target = dates or [_today()]
+    return [clockodo_sync.check_breaks(d) for d in target]
+
+
+@mcp.tool()
 def reset_day(date: str | None = None) -> Any:
     """Setzt einen Tag auf die automatische Erfassung zurück (verwirft manuelle Blöcke).
 

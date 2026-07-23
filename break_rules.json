@@ -1,0 +1,9 @@
+{
+  "_readme": "Gesetzliche Pausenregeln (ArbZG §4). thresholds: ab work_over_min Arbeitsminuten sind required_break_min Pause faellig (hoechste zutreffende Schwelle gilt). min_chunk_min: Pausen duerfen gestueckelt werden, zaehlen aber nur in Abschnitten >= diesem Wert als Ruhepause. max_continuous_work_min: nach so vielen Minuten Arbeit ohne (qualifizierende) Pause ist eine Pause faellig.",
+  "thresholds": [
+    { "work_over_min": 540, "required_break_min": 45 },
+    { "work_over_min": 360, "required_break_min": 30 }
+  ],
+  "min_chunk_min": 15,
+  "max_continuous_work_min": 360
+}
