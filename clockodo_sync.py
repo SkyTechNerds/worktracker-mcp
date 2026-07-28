@@ -25,10 +25,17 @@ je Zeitraum). WorkTracker-Segmente werden dafuer vorwaerts gemappt
 clockodo-Raum nicht -> sie werden bei clockodo->WorkTracker erhalten (ggf. um
 clockodo-Intervalle beschnitten), gehen also nicht verloren.
 
+Abwesenheiten (Urlaub / Krank / Freizeitausgleich) laufen seit 28.07.2026
+ebenfalls in beide Richtungen mit, aber ueber einen eigenen Pfad (siehe
+reconcile_absences): sie sind keine Zeiteintraege, sondern clockodo-Absences.
+Es wird nur ANGELEGT, nie geloescht oder storniert -- ein genehmigter
+HR-Vorgang wird von diesem Script niemals automatisch zurueckgenommen.
+
 CLI:
     python clockodo_sync.py --reconcile-window [--dry-run]   # rollierendes Fenster
     python clockodo_sync.py 2026-07-20 2026-07-21 [--dry-run]
     python clockodo_sync.py --today [--dry-run]
+    python clockodo_sync.py --absences [--dry-run]           # nur Abwesenheiten
 """
 
 from __future__ import annotations
@@ -121,6 +128,33 @@ def _wt_assign(date: str, seg: dict) -> Any:
 
 def _is_today(date: str) -> bool:
     return date == datetime.now().strftime("%Y-%m-%d")
+
+
+def _wt_get_absence(date: str) -> str | None:
+    """Abwesenheits-Markierung eines Tages: 'urlaub' | 'krank' | 'fza' | None."""
+    base, token = _wt_api()
+    with httpx.Client(timeout=10.0) as c:
+        r = c.get(f"{base}/api/absence?date={date}", headers={"Authorization": f"Bearer {token}"})
+    r.raise_for_status()
+    return r.json().get("absence")
+
+
+def _wt_set_absence(date_from: str, date_until: str, wt_type: str | None) -> Any:
+    base, token = _wt_api()
+    with httpx.Client(timeout=10.0) as c:
+        r = c.post(f"{base}/api/absence",
+                   headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+                   json={"from": date_from, "to": date_until, "type": wt_type})
+    r.raise_for_status()
+    return r.json()
+
+
+def _wt_workday_weekdays() -> set[int]:
+    """Arbeitstage aus der WorkTracker-Config, als Python-Wochentage (Mo=0..So=6).
+    WorkTracker zaehlt So=1..Sa=7."""
+    cfg = _load_json(_wt_config_path())
+    wt = cfg.get("workdayWeekdays") or [2, 3, 4, 5, 6]
+    return {(n - 2) % 7 for n in wt}
 
 
 # --------------------------------------------------------------------------
@@ -454,6 +488,160 @@ def _clip_segments(segs: list[dict], cuts: list[tuple[int, int]]) -> list[dict]:
 
 
 # --------------------------------------------------------------------------
+# Abwesenheiten (Urlaub / Krank / Freizeitausgleich)
+# --------------------------------------------------------------------------
+#
+# Abwesenheiten sind KEINE Zeiteintraege, sondern eigene clockodo-Objekte
+# (absences v4). Sie laufen deshalb ausserhalb des Segment-Abgleichs:
+#
+#   clockodo -> WorkTracker : setzt die Tages-Markierung (unkritisch, lokal)
+#   WorkTracker -> clockodo : legt einen Antrag an (echter HR-Vorgang!)
+#
+# Bewusste Asymmetrie: es wird nur ANGELEGT. Verschwindet eine Markierung in
+# WorkTracker, wird die clockodo-Abwesenheit NICHT storniert -- ein genehmigter
+# Antrag darf nicht von einem Hintergrund-Job zurueckgenommen werden. Solche
+# Faelle werden nur gemeldet (divergences) und sind von Hand zu klaeren.
+
+# clockodo-Abwesenheitstypen -> WorkTracker-Markierung. Nicht gemappt und damit
+# ignoriert: 6 Schule, 7 Mutterschutz, 8 Homeoffice, 9 ausser Haus, 14 Wehrdienst
+# (8/9 sind Arbeitstage, der Rest in WorkTracker nicht abbildbar).
+_CK_ABSENCE_TO_WT = {
+    1: "urlaub",   # Urlaub aus dem Kontingent
+    2: "urlaub",   # Sonderurlaub
+    10: "urlaub",  # Sonderurlaub (unbezahlt)
+    3: "fza",      # Abbau von Ueberstunden
+    4: "krank", 5: "krank", 11: "krank", 12: "krank", 13: "krank", 15: "krank",
+}
+_WT_ABSENCE_TO_CK = {"urlaub": 1, "krank": 4, "fza": 3}
+_CK_ABSENCE_STATUS_OK = {0, 1}   # 0 = beantragt, 1 = genehmigt
+_CK_TYPE_NEEDS_HOURS = {3}       # Ueberstundenabbau wird in Stunden gefuehrt
+_WT_ABSENCE_LABEL = {"urlaub": "Urlaub", "krank": "Krank", "fza": "Freizeitausgleich"}
+
+
+def _absence_payload(res: Any) -> list[dict]:
+    """absences ist v4 -> Nutzlast steckt in 'data' (aeltere Versionen: 'absences')."""
+    if isinstance(res, dict):
+        for key in ("data", "absences", "absence"):
+            if key in res:
+                val = res[key]
+                return val if isinstance(val, list) else [val]
+    return res if isinstance(res, list) else []
+
+
+def _clockodo_absences(cfg: dict, years: list[int]) -> list[dict]:
+    out: list[dict] = []
+    uid = cfg["users_id"]
+    for y in sorted(set(years)):
+        res = _api(cfg, "GET", _url(cfg, "absences", f"?filter[users_id]={uid}&filter[year]={y}"))
+        # Serverseitiger Filter wird nicht in jeder Version beachtet -> hier hart nachziehen.
+        out.extend([a for a in _absence_payload(res) if a.get("users_id") == uid])
+    return out
+
+
+def _create_absence(cfg: dict, body: dict) -> int:
+    items = _absence_payload(_api(cfg, "POST", _url(cfg, "absences"), body))
+    return items[0].get("id", 0) if items else 0
+
+
+def _ck_absence_days(absences: list[dict], dates: list[str]) -> dict[str, tuple[str, dict]]:
+    """Tag -> (WorkTracker-Typ, clockodo-Datensatz) fuer alle Tage im Fenster."""
+    want, out = set(dates), {}
+    for a in absences:
+        if a.get("status") not in _CK_ABSENCE_STATUS_OK:
+            continue
+        wt = _CK_ABSENCE_TO_WT.get(a.get("type"))
+        if not wt:
+            continue
+        d = datetime.strptime(a["date_since"], "%Y-%m-%d")
+        end = datetime.strptime(a["date_until"], "%Y-%m-%d")
+        while d <= end:
+            key = d.strftime("%Y-%m-%d")
+            if key in want:
+                out[key] = (wt, a)
+            d += timedelta(days=1)
+    return out
+
+
+def _group_absence_runs(marked: dict[str, str], dates: list[str],
+                        workdays: set[int]) -> list[tuple[str, str, str, int]]:
+    """Zusammenhaengende Tage gleichen Typs zu Zeitraeumen buendeln.
+    Ein Wochenende unterbricht den Lauf NICHT (Fr+Mo Urlaub = ein Zeitraum),
+    ein unmarkierter Arbeitstag schon. Rueckgabe: (von, bis, typ, arbeitstage)."""
+    runs: list[tuple[str, str, str, int]] = []
+    start = last = typ = None
+    n_work = 0
+    for date in dates:
+        is_workday = datetime.strptime(date, "%Y-%m-%d").weekday() in workdays
+        cur = marked.get(date)
+        if cur and cur == typ:
+            last, n_work = date, n_work + (1 if is_workday else 0)
+        elif cur:
+            if start:
+                runs.append((start, last, typ, n_work))
+            start, last, typ = date, date, cur
+            n_work = 1 if is_workday else 0
+        elif is_workday and start:
+            runs.append((start, last, typ, n_work))
+            start = last = typ = None
+            n_work = 0
+    if start:
+        runs.append((start, last, typ, n_work))
+    return runs
+
+
+def reconcile_absences(dates: list[str] | None = None, dry_run: bool = False) -> dict:
+    """Gleicht Urlaub / Krank / Freizeitausgleich in beide Richtungen ab."""
+    cfg = _clockodo_cfg()
+    dates = dates or window_dates()
+    workdays = _wt_workday_weekdays()
+    target_h = float(_load_json(_wt_config_path()).get("targetHoursPerDay", 8))
+
+    years = [int(d[:4]) for d in dates]
+    ck_days = _ck_absence_days(_clockodo_absences(cfg, years), dates)
+    wt_days = {d: _wt_get_absence(d) for d in dates}
+
+    plan: dict[str, Any] = {"dates": len(dates), "to_wt": [], "to_clockodo": [],
+                            "divergences": [], "created": 0, "marked": 0}
+
+    # --- clockodo -> WorkTracker: Markierung setzen/korrigieren ---
+    # clockodo gewinnt bei abweichendem Typ: dort liegt der genehmigte Vorgang.
+    # Folge: eine lokal geloeschte Markierung kommt beim naechsten Lauf zurueck,
+    # solange die Abwesenheit in clockodo steht. Wirklich weg = in clockodo stornieren.
+    for date in dates:
+        ck = ck_days.get(date)
+        if ck and wt_days.get(date) != ck[0]:
+            plan["to_wt"].append({"date": date, "type": ck[0], "was": wt_days.get(date),
+                                  "clockodo_id": ck[1].get("id"), "status": ck[1].get("status")})
+    if plan["to_wt"] and not dry_run:
+        for item in plan["to_wt"]:
+            _wt_set_absence(item["date"], item["date"], item["type"])
+            wt_days[item["date"]] = item["type"]
+        plan["marked"] = len(plan["to_wt"])
+
+    # --- WorkTracker -> clockodo: fehlende Antraege anlegen ---
+    only_wt = {d: t for d, t in wt_days.items() if t and d not in ck_days}
+    for start, end, wt_type, n_work in _group_absence_runs(only_wt, dates, workdays):
+        ck_type = _WT_ABSENCE_TO_CK.get(wt_type)
+        if not ck_type or n_work == 0:
+            plan["divergences"].append(
+                f"{start}..{end} {wt_type}: keine Arbeitstage im Zeitraum, nicht angelegt")
+            continue
+        body = {"users_id": cfg["users_id"], "date_since": start, "date_until": end,
+                "type": ck_type, "count_days": n_work}
+        if ck_type in _CK_TYPE_NEEDS_HOURS:
+            body["count_hours"] = n_work * target_h
+        plan["to_clockodo"].append(body)
+        if not dry_run:
+            try:
+                body["_id"] = _create_absence(cfg, body)
+                plan["created"] += 1
+            except RuntimeError as exc:
+                plan["divergences"].append(f"{start}..{end} {wt_type}: anlegen fehlgeschlagen: {exc}")
+
+    return plan
+
+
+# --------------------------------------------------------------------------
 # Reconcile eines Tages
 # --------------------------------------------------------------------------
 
@@ -611,6 +799,23 @@ def sync_days(dates: list[str]) -> list[dict]:
     return [reconcile_day(d, dry_run=False, source="wt") for d in dates]
 
 
+def _fmt_absences(p: dict) -> str:
+    lines = []
+    for i in p.get("to_wt", []):
+        was = f" (war: {i['was']})" if i.get("was") else ""
+        lines.append(f"    - clockodo->WT  {i['date']}: {_WT_ABSENCE_LABEL[i['type']]}{was}")
+    for b in p.get("to_clockodo", []):
+        lines.append(f"    - WT->clockodo  {b['date_since']}..{b['date_until']}: "
+                     f"Typ {b['type']}, {b['count_days']} Tag(e)"
+                     + (f", {b['count_hours']}h" if "count_hours" in b else "")
+                     + (f" -> #{b['_id']}" if b.get("_id") else ""))
+    for d in p.get("divergences", []):
+        lines.append(f"    ! {d}")
+    if not lines:
+        return "Abwesenheiten: noop"
+    return "Abwesenheiten:\n" + "\n".join(lines)
+
+
 def _fmt(p: dict) -> str:
     line = f"{p['date']}: {p['direction']}"
     if p["direction"] == "error":
@@ -631,6 +836,9 @@ def main() -> None:
     if not args:
         print(__doc__)
         return
+    if args[0] == "--absences":
+        print(_fmt_absences(reconcile_absences(dry_run=dry)) + (" [DRY-RUN]" if dry else ""))
+        return
     if args[0] == "--reconcile-window":
         plans = reconcile_window(dry_run=dry, source="poll")
     elif args[0] == "--today":
@@ -643,11 +851,23 @@ def main() -> None:
             print(_fmt(p) + (tag if p["direction"] not in ("noop", "error") else ""))
 
     if args[0] == "--reconcile-window":
+        # Abwesenheiten laufen im selben Job mit, aber ueber den eigenen Pfad.
+        abs_plan = {"marked": 0, "created": 0, "divergences": []}
+        try:
+            abs_plan = reconcile_absences(dry_run=dry)
+            out = _fmt_absences(abs_plan)
+            if out != "Abwesenheiten: noop":
+                print(out + tag)
+        except Exception as exc:  # noqa: BLE001
+            sys.stderr.write(f"[absences] {exc}\n")
+            abs_plan["divergences"] = [str(exc)]
         # Heartbeat: eine Zeile pro Lauf, damit man im Log sieht, dass der Job lebt.
         stamp = datetime.now().strftime("%Y-%m-%d %H:%M")
         acted = sum(1 for p in plans if p["direction"] not in ("noop", "error"))
         errs = sum(1 for p in plans if p["direction"] == "error")
-        print(f"{stamp} | {len(plans)} Tage geprueft, {acted} mit Aktion, {errs} Fehler{tag}")
+        abs_txt = (f", Abwesenheiten +{abs_plan['created']} clk / {abs_plan['marked']} WT"
+                   if (abs_plan["created"] or abs_plan["marked"] or abs_plan["divergences"]) else "")
+        print(f"{stamp} | {len(plans)} Tage geprueft, {acted} mit Aktion, {errs} Fehler{abs_txt}{tag}")
 
 
 if __name__ == "__main__":
