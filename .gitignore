@@ -6,3 +6,6 @@ __pycache__/
 clockodo_config.json
 clockodo_state.json
 clockodo_sync.log
+
+# Reconcile-/Edit-Backups
+*.bak.*

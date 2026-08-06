@@ -242,6 +242,59 @@ def check_breaks(dates: list[str] | None = None) -> Any:
 
 
 @mcp.tool()
+def reconcile_clockodo(
+    add_map: bool = False,
+    add_local: bool = False,
+    refresh_ref: bool = False,
+    apply: bool = False,
+) -> Any:
+    """Gleicht die clockodo-Stammdaten (aktive Kunden/Projekte) mit dem lokalen
+    WorkTracker und dem Mapping (clockodo_map.json) ab. Der Zeit-/Abwesenheits-Sync
+    fasst KEINE Stammdaten an -> neue clockodo-Kunden/Projekte muessen hiermit
+    nachgezogen werden, sonst wird Zeit darauf nicht gebucht (nur gewarnt).
+
+    Default: nur Bericht (aendert nichts). Flags wenden an (jede Datei wird vorher
+    gesichert):
+        add_map:     byProject-Stubs fuer ungemappte Kunden anlegen (je mit _todo
+                     zum Pruefen von Leistung/abrechenbar).
+        add_local:   fehlende lokale WT-Projekte anlegen (WorkTracker-App wird dafuer
+                     kurz beendet und neu gestartet).
+        refresh_ref: _clockodo_ref-Schnappschuss auf den Live-Stand bringen.
+        apply:       alle drei zusammen.
+
+    Rueckgabe: offene Kunden/Projekte, Mapping-/Lokal-Luecken, Vorschlaege und
+    (falls angewendet) das Aenderungsprotokoll + der Stand danach.
+    """
+    try:
+        import clockodo_reconcile as rec
+
+        a = rec.analyze()
+        applied: list[str] = []
+        if apply or refresh_ref or add_map:
+            applied += rec.apply_map(a, refresh_ref=apply or refresh_ref, add_map=apply or add_map)
+        if apply or add_local:
+            applied += rec.apply_local(rec.analyze())
+        if applied:
+            a = rec.analyze()  # Stand nach dem Anwenden
+        return {
+            "applied": applied,
+            "uncovered_customers": [{"id": c["id"], "name": c["name"]} for c in a["uncovered_customers"]],
+            "uncovered_projects": [
+                {"id": p["id"], "name": p["name"],
+                 "customer": a["cust_by_id"].get(p["customers_id"], {}).get("name")}
+                for p in a["uncovered_projects"]
+            ],
+            "map_without_local": a["map_without_local"],
+            "local_without_map": a["local_without_map"],
+            "proposed_map_stubs": rec.propose_map_stubs(a),
+        }
+    except FileNotFoundError as exc:
+        return {"error": f"clockodo nicht konfiguriert ({exc})."}
+    except Exception as exc:  # fehlertolerant: nie den MCP-Server crashen
+        return {"error": str(exc)}
+
+
+@mcp.tool()
 def reset_day(date: str | None = None) -> Any:
     """Setzt einen Tag auf die automatische Erfassung zurück (verwirft manuelle Blöcke).
 

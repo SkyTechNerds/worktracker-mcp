@@ -1,9 +1,30 @@
 {
   "_readme": "Regeln, wie WorkTracker-Segmente auf clockodo-Zeiteintraege abgebildet werden. Reihenfolge der Aufloesung: 1) kind=='break' -> nie buchen. 2) project trifft byProject. 3) ticket enthaelt (case-insensitive) einen byTicketContains-Eintrag. 4) sonst -> unmapped (wird NICHT gebucht, nur gewarnt). service_meeting greift bei meeting==true, sonst service_default. text = WorkTracker-note, sonst ticket.",
   "_clockodo_ref": {
-    "customers": {"antegma GmbH": 5050992, "Deutsche Bank": 5057494, "Enercon": 5068638, "Erhardt+Leimer GmbH": 5068695, "Hutchison Drei Austria GmbH": 5051145, "JUMO GmbH & Co. KG": 5051141, "Victorinox AG": 5068690},
-    "services": {"Buerokram": 1628652, "Entwicklung": 1628653, "Interne Arbeitszeit": 1628650, "Korrektur": 1628655, "Projektmanagement": 1628651, "Verschiedenes": 1628654, "Weiterbildung": 1628656},
-    "projects": {"JUMO / 1. Neubeauftragung 2026": 4072309, "JUMO / WCMS - Festpreisprojekt": 4072305, "Victorinox / Wartung von Adobe Workfront": 4080944, "Erhardt+Leimer / Wartung von Adobe Workfront": 4080956}
+    "customers": {
+      "antegma GmbH": 5050992,
+      "Deutsche Bank": 5057494,
+      "Enercon": 5068638,
+      "Erhardt+Leimer GmbH": 5068695,
+      "Hutchison Drei Austria GmbH": 5051145,
+      "JUMO GmbH & Co. KG": 5051141,
+      "Victorinox AG": 5068690
+    },
+    "services": {
+      "Buerokram": 1628652,
+      "Entwicklung": 1628653,
+      "Interne Arbeitszeit": 1628650,
+      "Korrektur": 1628655,
+      "Projektmanagement": 1628651,
+      "Verschiedenes": 1628654,
+      "Weiterbildung": 1628656
+    },
+    "projects": {
+      "JUMO / 1. Neubeauftragung 2026": 4072309,
+      "JUMO / WCMS - Festpreisprojekt": 4072305,
+      "Victorinox / Wartung von Adobe Workfront": 4080944,
+      "Erhardt+Leimer / Wartung von Adobe Workfront": 4080956
+    }
   },
   "byProject": {
     "JUMO-Website-CMS": {
@@ -19,6 +40,49 @@
       "billable": 1,
       "service_meeting": 1628651,
       "service_default": 1628653
+    },
+    "JUMO-Website-AEM": {
+      "customers_id": 5051141,
+      "projects_id": 4072305,
+      "billable": 1,
+      "service_meeting": 1628651,
+      "service_default": 1628653
+    },
+    "Enercon": {
+      "customers_id": 5068638,
+      "billable": 1,
+      "service_meeting": 1628651,
+      "service_default": 1628653
+    },
+    "Deutsche Bank": {
+      "customers_id": 5057494,
+      "billable": 1,
+      "service_meeting": 1628651,
+      "service_default": 1628653,
+      "_todo": "vom Helfer vorgeschlagen - Leistung/abrechenbar pruefen"
+    },
+    "Erhardt+Leimer GmbH": {
+      "customers_id": 5068695,
+      "billable": 1,
+      "service_meeting": 1628651,
+      "service_default": 1628653,
+      "_todo": "vom Helfer vorgeschlagen - Leistung/abrechenbar pruefen",
+      "projects_id": 4080956
+    },
+    "Hutchison Drei Austria GmbH": {
+      "customers_id": 5051145,
+      "billable": 1,
+      "service_meeting": 1628651,
+      "service_default": 1628653,
+      "_todo": "vom Helfer vorgeschlagen - Leistung/abrechenbar pruefen"
+    },
+    "Victorinox AG": {
+      "customers_id": 5068690,
+      "billable": 1,
+      "service_meeting": 1628651,
+      "service_default": 1628653,
+      "_todo": "vom Helfer vorgeschlagen - Leistung/abrechenbar pruefen",
+      "projects_id": 4080944
     }
   },
   "meetingDefault": {
