@@ -83,6 +83,13 @@
       "service_default": 1628653,
       "_todo": "vom Helfer vorgeschlagen - Leistung/abrechenbar pruefen",
       "projects_id": 4080944
+    },
+    "Hootsuite": {
+      "customers_id": 5114730,
+      "billable": 1,
+      "service_meeting": 1628651,
+      "service_default": 1628653,
+      "_todo": "vom Helfer vorgeschlagen - Leistung/abrechenbar pruefen"
     }
   },
   "meetingDefault": {
