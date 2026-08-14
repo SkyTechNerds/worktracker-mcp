@@ -16,6 +16,9 @@ Agent**: Claude Code, ChatGPT Desktop, Cursor, Codex CLI, Windsurf, Zed u. a. Da
 > einstige `worktracker`-Claude-Skill konnte — in Claude Code bindest du ihn jetzt einfach
 > als MCP-Server ein (siehe unten) statt als Skill.
 
+> 🔗 **clockodo-Sync:** WorkTracker-Zeiten (und Urlaub/Krank) automatisch nach clockodo
+> spiegeln — Schritt-für-Schritt-Anleitung: **[CLOCKODO.md](CLOCKODO.md)**.
+
 ---
 
 ## Zwei Transports — ein Server
