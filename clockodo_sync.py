@@ -42,6 +42,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import os
 import sys
 import urllib.error
@@ -240,11 +241,44 @@ def _local_hhmm(ms: int) -> str:
 # Mapping: WorkTracker-Segment -> clockodo-Eintrag (vorwaerts)
 # --------------------------------------------------------------------------
 
+TEXT_SEP = " — "
+# Ticket-Muster wie in WorkTracker gepflegt: PROJEKT-123 (auch WCMS-2938).
+TICKET_RE = re.compile(r"^[A-Z][A-Z0-9]+-\d+$")
+
+
+def compose_text(seg: dict) -> str:
+    """Ticket und Notiz zu einem clockodo-Text.
+
+    Frueher gewann die Notiz und das Ticket fiel weg — dadurch war in clockodo
+    bei den meisten Eintraegen kein Ticketbezug mehr erkennbar, und eine
+    Auswertung nach Ticket lief dort ins Leere. Jetzt stehen beide drin,
+    getrennt durch TEXT_SEP; parse_text() dreht das wieder auseinander.
+    """
+    ticket = (seg.get("ticket") or "").strip()
+    note = (seg.get("note") or "").strip()
+    return TEXT_SEP.join(p for p in (ticket, note) if p)
+
+
+def parse_text(text: str | None) -> tuple[str | None, str | None]:
+    """clockodo-Text -> (ticket, note). Gegenstueck zu compose_text().
+
+    Vertraegt auch die alten Eintraege ohne Trenner: dort steht entweder nur
+    ein Ticket oder nur eine Notiz — anhand des Ticket-Musters unterschieden.
+    """
+    text = (text or "").strip()
+    if not text:
+        return None, None
+    if TEXT_SEP in text:
+        ticket, note = text.split(TEXT_SEP, 1)
+        return ticket.strip() or None, note.strip() or None
+    return (text, None) if TICKET_RE.match(text) else (None, text)
+
+
 def map_segment(seg: dict, mapping: dict) -> dict | None:
     """clockodo-Eintrags-Body (ohne Zeiten) oder None (Pause/nicht gemappt)."""
     if seg.get("kind") == "break":
         return None
-    text = (seg.get("note") or seg.get("ticket") or "").strip()
+    text = compose_text(seg)
     project = seg.get("project")
     meeting = bool(seg.get("meeting"))
 
@@ -281,6 +315,19 @@ def map_segment(seg: dict, mapping: dict) -> dict | None:
         if text:
             entry["text"] = text
         return entry
+
+    # Rueckfallebene: Arbeit ohne Projekt und ohne passende Ticket-Regel ist
+    # interne Arbeit. Ohne diesen Zweig fiel sie still durch und tauchte in
+    # clockodo nie auf - die Zeit fehlte dort dann in der Monatssumme.
+    idf = mapping.get("internalDefault")
+    if idf and not project:
+        entry = {"customers_id": idf["customers_id"], "services_id": idf["services_id"],
+                 "billable": idf.get("billable", 0)}
+        if idf.get("projects_id"):
+            entry["projects_id"] = idf["projects_id"]
+        if text:
+            entry["text"] = text
+        return entry
     return None
 
 
@@ -307,22 +354,24 @@ def reverse_entry(e: dict, rmap: dict) -> dict:
     """clockodo-Eintrag -> WorkTracker-Work-Segment {from,to,kind,ticket,project,note,meeting}."""
     frm = _local_hhmm(_ms_from_iso_utc(e["time_since"]))
     to = _local_hhmm(_ms_from_iso_utc(e["time_until"]))
-    text = (e.get("text") or "").strip() or None
+    ticket, note = parse_text(e.get("text"))
     cid, pid, sid = e.get("customers_id"), e.get("projects_id"), e.get("services_id")
 
     info = rmap["proj"].get((cid, pid))
     if info:
         return {"from": frm, "to": to, "kind": "work", "project": info["wt_project"],
-                "ticket": text, "note": None,
+                "ticket": ticket, "note": note,
                 "meeting": bool(info["service_meeting"] and sid == info["service_meeting"])}
 
     rule = rmap["by_cust_service"].get((cid, sid)) or rmap["by_cust"].get(cid)
     if rule:
+        # Steht im Text ein Ticket, gewinnt es — die Regel liefert nur den Fallback.
         return {"from": frm, "to": to, "kind": "work", "project": None,
-                "ticket": rule.get("wt_ticket") or rule.get("match"), "note": text, "meeting": False}
+                "ticket": ticket or rule.get("wt_ticket") or rule.get("match"),
+                "note": note, "meeting": False}
 
     return {"from": frm, "to": to, "kind": "work", "project": None,
-            "ticket": text, "note": None, "meeting": False}
+            "ticket": ticket, "note": note, "meeting": False}
 
 
 # --------------------------------------------------------------------------

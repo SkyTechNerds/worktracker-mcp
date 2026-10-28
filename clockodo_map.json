@@ -2,25 +2,42 @@
   "_readme": "Regeln, wie WorkTracker-Segmente auf clockodo-Zeiteintraege abgebildet werden. Reihenfolge der Aufloesung: 1) kind=='break' -> nie buchen. 2) project trifft byProject. 3) ticket enthaelt (case-insensitive) einen byTicketContains-Eintrag. 4) sonst -> unmapped (wird NICHT gebucht, nur gewarnt). service_meeting greift bei meeting==true, sonst service_default. text = WorkTracker-note, sonst ticket.",
   "_clockodo_ref": {
     "customers": {
-      "antegma GmbH": 5050992,
+      "Dehner Academy": 5134619,
       "Deutsche Bank": 5057494,
+      "EVONIK": 5120676,
       "Enercon": 5068638,
       "Erhardt+Leimer GmbH": 5068695,
+      "Hootsuite": 5114730,
       "Hutchison Drei Austria GmbH": 5051145,
       "JUMO GmbH & Co. KG": 5051141,
-      "Victorinox AG": 5068690
+      "Victorinox AG": 5068690,
+      "antegma GmbH": 5050992
     },
     "services": {
-      "Buerokram": 1628652,
-      "Entwicklung": 1628653,
+      "01 - Consulting": 1635057,
+      "02 - Requirements Analysis & Refinement": 1647051,
+      "03 - Scrum (Planning + Daily + Review + Retro)": 1647054,
+      "04 - Architectural Development": 1647094,
+      "05 - Backend Development": 1628653,
+      "06 - Frontend Development": 1635059,
+      "07 - Code Review & Testing": 1647095,
+      "08 - Deployment & Rollout": 1647053,
+      "09 - Bugfixing & Error Handling": 1647050,
+      "10 - Project Management": 1647096,
+      "Administrative Tätigkeit": 1628652,
       "Interne Arbeitszeit": 1628650,
       "Korrektur": 1628655,
+      "Marketing": 1634769,
       "Projektmanagement": 1628651,
+      "Sales": 1634768,
       "Verschiedenes": 1628654,
       "Weiterbildung": 1628656
     },
     "projects": {
       "JUMO / 1. Neubeauftragung 2026": 4072309,
+      "JUMO / 2. Neubeauftragung 2026": 4103630,
+      "antegma / Intern - Kommunikation": 4128699,
+      "antegma / Intern - Vertrieb": 4128694,
       "JUMO / WCMS - Festpreisprojekt": 4072305,
       "Victorinox / Wartung von Adobe Workfront": 4080944,
       "Erhardt+Leimer / Wartung von Adobe Workfront": 4080956
@@ -90,6 +107,53 @@
       "service_meeting": 1628651,
       "service_default": 1628653,
       "_todo": "vom Helfer vorgeschlagen - Leistung/abrechenbar pruefen"
+    },
+    "JUMO WCMS - Festpreisprojekt": {
+      "customers_id": 5051141,
+      "projects_id": 4072305,
+      "billable": 1,
+      "service_meeting": 1628651,
+      "service_default": 1628653
+    },
+    "JUMO 1. Neubeauftragung 2026": {
+      "customers_id": 5051141,
+      "projects_id": 4072309,
+      "billable": 1,
+      "service_meeting": 1628651,
+      "service_default": 1628653
+    },
+    "JUMO 2. Neubeauftragung 2026": {
+      "customers_id": 5051141,
+      "projects_id": 4103630,
+      "billable": 1,
+      "service_meeting": 1628651,
+      "service_default": 1628653
+    },
+    "Intern - Kommunikation": {
+      "customers_id": 5050992,
+      "projects_id": 4128699,
+      "billable": 0,
+      "service_meeting": 1628650,
+      "service_default": 1628650
+    },
+    "Intern - Vertrieb": {
+      "customers_id": 5050992,
+      "projects_id": 4128694,
+      "billable": 0,
+      "service_meeting": 1628650,
+      "service_default": 1628650
+    },
+    "Dehner Academy": {
+      "customers_id": 5134619,
+      "billable": 1,
+      "service_meeting": 1628651,
+      "service_default": 1628653
+    },
+    "EVONIK": {
+      "customers_id": 5120676,
+      "billable": 1,
+      "service_meeting": 1628651,
+      "service_default": 1628653
     }
   },
   "meetingDefault": {
@@ -134,6 +198,40 @@
       "projects_id": 4072305,
       "services_id": 1628653,
       "billable": 1
+    },
+    {
+      "match": "erklärvideo",
+      "wt_ticket": "Antegma Erklärvideo",
+      "customers_id": 5050992,
+      "services_id": 1628650,
+      "billable": 0
+    },
+    {
+      "match": "buzzer",
+      "wt_ticket": "Adobe BeatTheBuzzer",
+      "customers_id": 5050992,
+      "services_id": 1628650,
+      "billable": 0
+    },
+    {
+      "match": "marketing-agenten",
+      "wt_ticket": "antegma Marketing-Agenten",
+      "customers_id": 5050992,
+      "services_id": 1628650,
+      "billable": 0
+    },
+    {
+      "match": "genstudio",
+      "wt_ticket": "GenStudio MCP",
+      "customers_id": 5050992,
+      "services_id": 1628650,
+      "billable": 0
     }
-  ]
+  ],
+  "internalDefault": {
+    "_comment": "Rueckfallebene: Arbeit OHNE project und ohne byTicketContains-Treffer -> antegma intern, nicht abrechenbar. Verhindert, dass interne Zeit still durchfaellt und in clockodo fehlt. Pausen bleiben ausgenommen.",
+    "customers_id": 5050992,
+    "services_id": 1628650,
+    "billable": 0
+  }
 }

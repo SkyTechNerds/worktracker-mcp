@@ -18,7 +18,16 @@ Default = nur Bericht (aendert nichts). Anwenden nur mit Flags:
     python clockodo_reconcile.py --refresh-ref   # _clockodo_ref auf Live-Stand
     python clockodo_reconcile.py --add-map       # byProject-Stubs fuer ungemappte Kunden
     python clockodo_reconcile.py --add-local     # fehlende lokale WT-Projekte anlegen
-    python clockodo_reconcile.py --apply         # alle drei
+    python clockodo_reconcile.py --add-map-projects  # Stubs je ungemapptem PROJEKT
+    python clockodo_reconcile.py --apply         # alles davon
+    python clockodo_reconcile.py --apply --auto  # unbeaufsichtigt (launchd, s.u.)
+
+Auto-Modus (--auto):
+  * beendet eine laufende WorkTracker-App NIE. Läuft sie, werden fehlende
+    lokale Projekte übersprungen und beim nächsten Lauf nachgezogen.
+  * startet die App auch nicht von sich aus; schreibt nur config.json.
+  * gibt statt des Vollberichts nur Änderungszeilen mit Zeitstempel aus.
+  * läuft täglich per launchd: com.antegma.worktracker-clockodo-stammdaten
 
 Sicherheit:
   * Jede Datei wird vor dem Schreiben gesichert (*.bak.reconcile.<ts>).
@@ -160,6 +169,42 @@ def propose_map_stubs(a: dict) -> dict[str, dict]:
     return stubs
 
 
+def _cust_short(a: dict, customers_id: int) -> str:
+    """Kurzname des Kunden für den Projektnamen (wie in _clockodo_ref)."""
+    c = a["cust_by_id"].get(customers_id)
+    return c["name"].split(" ")[0] if c else "?"
+
+
+def propose_project_stubs(a: dict) -> dict[str, dict]:
+    """byProject-Stub je ungemapptem clockodo-PROJEKT.
+
+    Ergänzt propose_map_stubs: dort fällt jedes Projekt durch, dessen Kunde
+    schon irgendwie gemappt ist (z. B. eine neue Beauftragung bei Bestandskunde).
+    Name = "<Kunde-Kurzform> <Projektname>", sofern noch nicht vergeben.
+    """
+    services = a["live"]["services"]
+    dev = _service_id(services, "Entwicklung", 1628653)
+    pm = _service_id(services, "Projektmanagement", 1628651)
+    intern = _service_id(services, "Interne Arbeitszeit", 1628650)
+    have = set(a["map"].get("byProject", {}).keys())
+    stubs: dict[str, dict] = {}
+    for proj in a["uncovered_projects"]:
+        cust = a["cust_by_id"].get(proj["customers_id"], {})
+        internal = not cust.get("billable_default", True)
+        name = f'{_cust_short(a, proj["customers_id"])} {proj["name"]}'
+        if name in have or name in stubs:
+            continue
+        stubs[name] = {
+            "customers_id": proj["customers_id"],
+            "projects_id": proj["id"],
+            "billable": 0 if internal else 1,
+            "service_meeting": intern if internal else pm,
+            "service_default": intern if internal else dev,
+            "_todo": "vom Helfer vorgeschlagen - Leistung/abrechenbar pruefen",
+        }
+    return stubs
+
+
 def build_ref(live: dict) -> dict:
     return {
         "customers": {c["name"]: c["id"] for c in sorted(live["customers"], key=lambda x: x["name"])},
@@ -177,7 +222,8 @@ def _backup(path: Path) -> None:
     path.with_suffix(path.suffix + f".bak.reconcile.{int(time.time())}").write_bytes(path.read_bytes())
 
 
-def apply_map(a: dict, refresh_ref: bool, add_map: bool) -> list[str]:
+def apply_map(a: dict, refresh_ref: bool, add_map: bool,
+              add_projects: bool = False) -> list[str]:
     m = a["map"]
     log: list[str] = []
     if refresh_ref:
@@ -189,14 +235,29 @@ def apply_map(a: dict, refresh_ref: bool, add_map: bool) -> list[str]:
             if name not in m.setdefault("byProject", {}):
                 m["byProject"][name] = stub
                 log.append(f"byProject-Stub angelegt: {name}")
+    if add_projects:
+        for name, stub in propose_project_stubs(a).items():
+            if name not in m.setdefault("byProject", {}):
+                m["byProject"][name] = stub
+                log.append(f"byProject-Stub (Projekt) angelegt: {name}")
     if log:
         _backup(_MAP)
         _MAP.write_text(json.dumps(m, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     return log
 
 
-def apply_local(a: dict) -> list[str]:
-    """Fehlende lokale WT-Projekte anlegen (App beenden -> editieren -> neu starten)."""
+def _app_running() -> bool:
+    return subprocess.run(["pgrep", "-x", "WorkTracker"],
+                          capture_output=True).returncode == 0
+
+
+def apply_local(a: dict, auto: bool = False) -> list[str]:
+    """Fehlende lokale WT-Projekte anlegen (App beenden -> editieren -> neu starten).
+
+    auto=True (unbeaufsichtigter Lauf): die laufende App wird NIE beendet. Läuft
+    sie, wird nur gemeldet und beim nächsten Lauf nachgezogen; sonst wird die
+    config.json still geschrieben, ohne die App zu starten.
+    """
     cfg_path = cs._wt_config_path()
     m = json.loads(_MAP.read_text(encoding="utf-8"))  # ggf. gerade erweitert
     by_keys = list(m.get("byProject", {}).keys())
@@ -206,10 +267,16 @@ def apply_local(a: dict) -> list[str]:
     if not missing:
         return ["keine fehlenden lokalen Projekte"]
 
-    subprocess.run(["osascript", "-e", 'quit app "WorkTracker"'], check=False)
-    time.sleep(2)
-    subprocess.run(["pkill", "-x", "WorkTracker"], check=False)
-    time.sleep(1)
+    running = _app_running()
+    if auto and running:
+        return [f"WorkTracker läuft — {len(missing)} Projekt(e) NICHT angelegt "
+                f"(Neustart im Auto-Modus unterbleibt): {', '.join(missing)}"]
+
+    if not auto:
+        subprocess.run(["osascript", "-e", 'quit app "WorkTracker"'], check=False)
+        time.sleep(2)
+        subprocess.run(["pkill", "-x", "WorkTracker"], check=False)
+        time.sleep(1)
 
     _backup(cfg_path)
     used = {p.get("color") for p in wt["projects"]}
@@ -222,8 +289,9 @@ def apply_local(a: dict) -> list[str]:
         })
         log.append(f"lokales WT-Projekt angelegt: {name}")
     cfg_path.write_text(json.dumps(wt, indent=2, ensure_ascii=False), encoding="utf-8")
-    subprocess.run(["open", "/Applications/WorkTracker.app"], check=False)
-    log.append("WorkTracker neu gestartet")
+    if not auto:
+        subprocess.run(["open", "/Applications/WorkTracker.app"], check=False)
+        log.append("WorkTracker neu gestartet")
     return log
 
 
@@ -273,12 +341,21 @@ def main() -> None:
         return
 
     apply_all = "--apply" in args
+    auto = "--auto" in args
     log: list[str] = []
-    if apply_all or "--refresh-ref" in args or "--add-map" in args:
+    if apply_all or {"--refresh-ref", "--add-map", "--add-map-projects"} & args:
         log += apply_map(a, refresh_ref=apply_all or "--refresh-ref" in args,
-                         add_map=apply_all or "--add-map" in args)
+                         add_map=apply_all or "--add-map" in args,
+                         add_projects=apply_all or "--add-map-projects" in args)
     if apply_all or "--add-local" in args:
-        log += apply_local(analyze())  # frisch, damit gerade angelegte Stubs zaehlen
+        log += apply_local(analyze(), auto=auto)  # frisch, damit gerade angelegte Stubs zaehlen
+
+    if auto:
+        # Unbeaufsichtigt: nur schreiben, was sich geändert hat — kein Vollbericht.
+        stamp = time.strftime("%Y-%m-%d %H:%M")
+        for line in log or ["nichts zu tun"]:
+            print(f"[{stamp}] {line}")
+        return
 
     if log:
         print("Angewendet:")
